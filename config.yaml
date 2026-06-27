@@ -12,9 +12,15 @@ categories:
   - astro-ph.IM   # Instrumentation and Methods for Astrophysics
   - astro-ph.SR   # Solar and Stellar Astrophysics
 
-# How many days back to look. 1 = papers submitted in the last 24 h.
-# (arXiv does not announce on weekends, so a Monday run may want days: 3.)
-days: 1
+# How many days back to look. With the seen-id cache enabled (default), a few
+# days of overlap is safe: papers already notified are never repeated, and a
+# missed/failed daily run is recovered on the next run. 3 covers weekends.
+days: 3
+
+# Which date to filter/sort by:
+#   updated   -> last-updated date (also catches v2 replacements & updates)
+#   submitted -> original submission date only
+date_field: updated
 
 # Safety cap on how many papers to pull from the API per run.
 max_results: 400

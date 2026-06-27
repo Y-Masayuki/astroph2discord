@@ -64,6 +64,7 @@ class Result:
     primary_category: str
     categories: list
     published: dt.datetime
+    updated: dt.datetime
     score: float = 0.0
     hit_keywords: list = field(default_factory=list)
 
@@ -85,8 +86,11 @@ def load_config(path: str | None = None) -> dict:
     config.setdefault("categories", DEFAULT_CATEGORIES)
     config.setdefault("keywords", {})
     config.setdefault("score_threshold", 0)
-    config.setdefault("days", 1)
+    config.setdefault("days", 3)
     config.setdefault("max_results", 400)
+    # 'updated' catches replacements / late updates within the window;
+    # 'submitted' uses only the original v1 date.
+    config.setdefault("date_field", "updated")
     # normalise keyword scores to float
     config["keywords"] = {str(k): float(v) for k, v in config["keywords"].items()}
     config["score_threshold"] = float(config["score_threshold"])
@@ -99,6 +103,8 @@ def load_config(path: str | None = None) -> dict:
 def _entry_to_result(entry) -> Result:
     arxiv_id = entry.id.split("/abs/")[-1]
     published = dt.datetime(*entry.published_parsed[:6], tzinfo=dt.timezone.utc)
+    updated_parsed = getattr(entry, "updated_parsed", None) or entry.published_parsed
+    updated = dt.datetime(*updated_parsed[:6], tzinfo=dt.timezone.utc)
     authors = [a.get("name", "") for a in getattr(entry, "authors", [])]
 
     pdf_url = ""
@@ -122,14 +128,23 @@ def _entry_to_result(entry) -> Result:
         primary_category=primary,
         categories=categories,
         published=published,
+        updated=updated,
     )
 
 
 def fetch_articles(categories: Iterable[str], days: int,
-                   max_results: int = 400) -> list[Result]:
-    """Fetch recent papers, newest first, stopping once we pass the date cutoff."""
+                   max_results: int = 400,
+                   date_field: str = "updated") -> list[Result]:
+    """Fetch recent papers, newest first, stopping once we pass the date cutoff.
+
+    date_field: 'updated' sorts/filters by last-updated date (catches v2
+    replacements and updates within the window); 'submitted' uses the original
+    submission date only.
+    """
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
     search_query = " OR ".join(f"cat:{c}" for c in categories)
+    use_updated = date_field == "updated"
+    sort_key = "lastUpdatedDate" if use_updated else "submittedDate"
 
     results: list[Result] = []
     start = 0
@@ -138,7 +153,7 @@ def fetch_articles(categories: Iterable[str], days: int,
             "search_query": search_query,
             "start": start,
             "max_results": min(ARXIV_PAGE_SIZE, max_results - start),
-            "sortBy": "submittedDate",
+            "sortBy": sort_key,
             "sortOrder": "descending",
         }
         url = ARXIV_API + "?" + urllib.parse.urlencode(params)
@@ -150,7 +165,8 @@ def fetch_articles(categories: Iterable[str], days: int,
         reached_cutoff = False
         for entry in feed.entries:
             result = _entry_to_result(entry)
-            if result.published < cutoff:
+            ref_date = result.updated if use_updated else result.published
+            if ref_date < cutoff:
                 reached_cutoff = True
                 break
             results.append(result)
@@ -227,6 +243,11 @@ def _score_color(score: float) -> int:
 
 
 def build_embed(result: Result) -> dict:
+    revised = result.updated.date() != result.published.date()
+    title = result.title
+    if revised:
+        title = "🔄 " + title  # flag replacements (v2, v3, …)
+
     desc_lines = [
         f"**Score** `{result.score:g}`  |  **Hits** {', '.join(result.hit_keywords)}",
         f"**Authors** {result.author_str()}",
@@ -234,13 +255,15 @@ def build_embed(result: Result) -> dict:
         "",
         _truncate(result.abstract, DISCORD_DESC_LIMIT - 300),
     ]
+    footer = f"arXiv:{result.arxiv_id}  ·  submitted {result.published:%Y-%m-%d}"
+    if revised:
+        footer += f"  ·  revised {result.updated:%Y-%m-%d}"
     return {
-        "title": _truncate(result.title, DISCORD_TITLE_LIMIT),
+        "title": _truncate(title, DISCORD_TITLE_LIMIT),
         "url": result.url,
         "description": "\n".join(desc_lines),
         "color": _score_color(result.score),
-        "footer": {"text": f"arXiv:{result.arxiv_id}  ·  "
-                           f"submitted {result.published:%Y-%m-%d}"},
+        "footer": {"text": footer},
     }
 
 
@@ -302,10 +325,38 @@ def _send(webhook_url: str, payload: dict, dry_run: bool) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Seen-ID cache (avoid duplicates; provide catch-up safety across runs)
+# --------------------------------------------------------------------------- #
+SEEN_RETENTION_DAYS = 120
+
+
+def load_seen(path: str) -> dict:
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        print(f"WARNING: could not read state file {path}; starting fresh.",
+              file=sys.stderr)
+        return {}
+
+
+def save_seen(path: str, seen: dict) -> None:
+    # Prune entries older than the retention window to keep the file small.
+    cutoff = (dt.datetime.now(dt.timezone.utc)
+              - dt.timedelta(days=SEEN_RETENTION_DAYS)).date().isoformat()
+    pruned = {k: v for k, v in seen.items() if v >= cutoff}
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(pruned, fh, indent=0, sort_keys=True)
+
+
+# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def run(config_path: str | None, webhook_url: str | None,
-        days: int | None, dry_run: bool) -> int:
+        days: int | None, dry_run: bool,
+        state_file: str | None) -> int:
     config = load_config(config_path)
     if days is not None:
         config["days"] = days
@@ -315,22 +366,37 @@ def run(config_path: str | None, webhook_url: str | None,
         return 1
 
     articles = fetch_articles(config["categories"], config["days"],
-                              config["max_results"])
+                              config["max_results"], config["date_field"])
     matches = filter_and_score(articles, config["keywords"],
                                config["score_threshold"])
 
-    print(f"Fetched {len(articles)} papers from the last {config['days']} day(s); "
-          f"{len(matches)} matched.", file=sys.stderr)
+    # De-duplicate against papers already notified in previous runs. The key is
+    # the versioned arXiv id (e.g. 2605.11486v2), so a v2 replacement is treated
+    # as new and re-notified.
+    seen = load_seen(state_file) if state_file else {}
+    fresh = [m for m in matches if m.arxiv_id not in seen]
 
-    if not matches:
-        print("No matching papers — nothing sent.", file=sys.stderr)
+    print(f"Fetched {len(articles)} papers from the last {config['days']} day(s) "
+          f"(by {config['date_field']} date); {len(matches)} matched, "
+          f"{len(fresh)} new after de-duplication.", file=sys.stderr)
+
+    if not fresh:
+        print("Nothing new to send.", file=sys.stderr)
         return 0
 
     if not dry_run and not webhook_url:
         print("ERROR: DISCORD_WEBHOOK_URL is not set.", file=sys.stderr)
         return 1
 
-    post_to_discord(webhook_url, matches, config, dry_run=dry_run)
+    post_to_discord(webhook_url, fresh, config, dry_run=dry_run)
+
+    # Record what we sent so we never repeat it. Skip during dry runs.
+    if state_file and not dry_run:
+        today = dt.date.today().isoformat()
+        for m in fresh:
+            seen[m.arxiv_id] = today
+        save_seen(state_file, seen)
+
     return 0
 
 
@@ -341,10 +407,16 @@ def main() -> None:
                         help="look back this many days (overrides config)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the Discord payload instead of sending it")
+    parser.add_argument("--state-file", default="seen_ids.json",
+                        help="JSON file of already-notified arXiv ids "
+                             "(de-duplication); default: seen_ids.json")
+    parser.add_argument("--no-state", action="store_true",
+                        help="disable the seen-id cache (notify every match)")
     args = parser.parse_args()
 
+    state_file = None if args.no_state else args.state_file
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-    sys.exit(run(args.config, webhook_url, args.days, args.dry_run))
+    sys.exit(run(args.config, webhook_url, args.days, args.dry_run, state_file))
 
 
 if __name__ == "__main__":

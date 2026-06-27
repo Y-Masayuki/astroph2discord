@@ -12,12 +12,29 @@ This is a Discord-focused successor to
 
 ## How it works
 
-1. Query the arXiv API for papers submitted to your chosen `astro-ph`
-   subcategories in the last *N* days (newest first).
+1. Query the arXiv API for papers in your chosen `astro-ph` subcategories
+   whose date (`updated` by default) falls in the last *N* days, newest first.
 2. Score each paper: sum the weights of the keywords found in its title +
    abstract (case-insensitive substring match).
-3. Post papers scoring at/above the threshold to Discord as embeds, one
-   message per 10 papers (Discord's per-message embed limit).
+3. Drop papers already notified in a previous run (a committed
+   `seen_ids.json` cache), then post the rest to Discord as embeds, packed so
+   each message stays within Discord's limits (≤10 embeds and ≤6000 chars).
+
+### Why a look-back window + a cache?
+
+arXiv's API can only sort by submission or last-updated date, not by the date a
+paper is *announced* in the daily listing. To avoid missing papers when a
+scheduled run fails, is skipped, or runs over a weekend, the window
+(`days`) overlaps by a few days. The `seen_ids.json` cache — committed back by
+the Action — guarantees an overlapping window never produces duplicate
+notifications, and lets a missed run be recovered on the next one. The cache
+key includes the version (e.g. `2605.11486v2`), so a replacement (v2) is
+treated as new and re-notified.
+
+> Limitation: a paper whose *announcement* is delayed weeks after its original
+> submission (e.g. a long moderation hold) can still fall outside any
+> reasonable window. For a brand-new deployment, run a one-time catch-up (see
+> below) to backfill recent matches.
 
 ## Setup
 
@@ -62,15 +79,39 @@ python arxiv2discord.py --days 3 --dry-run   # print payload, send nothing
 `--dry-run` prints the exact JSON that would be sent to Discord — handy for
 tuning keywords without spamming your channel.
 
+### One-time catch-up (recover older matches)
+
+When you first deploy — or if a paper's announcement was delayed — post all
+matches from a wider window, ignoring the cache:
+
+```bash
+python arxiv2discord.py --days 60 --no-state
+```
+
+`--no-state` neither reads nor writes `seen_ids.json`, so it will (re)post every
+match in the window. Use it deliberately; the daily Action keeps `--state` on.
+
 ## Configuration reference
 
-| Key               | Meaning                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| `categories`      | arXiv categories to query (default: all six `astro-ph.*`).     |
-| `days`            | Look-back window in days. `1` = last 24 h.                     |
-| `max_results`     | Safety cap on papers pulled from the API per run.              |
-| `score_threshold` | Minimum summed score required to notify.                       |
-| `keywords`        | `keyword: weight` map; scored against title + abstract.        |
+| Key               | Meaning                                                                   |
+| ----------------- | ------------------------------------------------------------------------- |
+| `categories`      | arXiv categories to query (default: all six `astro-ph.*`).                |
+| `days`            | Look-back window in days. Overlap is safe thanks to the seen-id cache.    |
+| `date_field`      | `updated` (catches v2 replacements & updates) or `submitted` (v1 only).   |
+| `max_results`     | Safety cap on papers pulled from the API per run.                         |
+| `score_threshold` | Minimum summed score required to notify.                                  |
+| `keywords`        | `keyword: weight` map; scored against title + abstract.                   |
+
+CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
+
+## De-duplication & not missing papers
+
+- `seen_ids.json` records the versioned arXiv ids already notified; the daily
+  Action commits it back. This makes the overlapping look-back window safe (no
+  duplicates) and recovers any run that failed or was skipped.
+- `date_field: updated` means a **replacement (v2, v3, …)** is treated as a new
+  item (its id carries the version) and re-notified, flagged with 🔄 and a
+  "revised" date. This is the case the original submitted-date filter missed.
 
 ## Notes & limitations
 
@@ -78,8 +119,9 @@ tuning keywords without spamming your channel.
   reuse the code elsewhere, keep a descriptive UA or arXiv returns `403`.
 - Matching is plain substring matching (so `disk` also matches `disks`). For
   whole-word matching you'd need to switch `score_article` to a regex.
-- There is no persistent "already seen" store; duplicate avoidance relies on the
-  disjoint daily window. If you run more frequently, add an ID cache.
+- The arXiv API cannot sort by *announcement* date. A paper announced long after
+  its submission/update can still fall outside the window; use the one-time
+  catch-up to backfill.
 
 ## Credits
 

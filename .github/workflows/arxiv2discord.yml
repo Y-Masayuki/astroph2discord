@@ -3,19 +3,28 @@ name: arxiv2discord
 on:
   schedule:
     # Runs daily. Cron is in UTC; 23:00 UTC = 08:00 JST (next day).
-    # A daily run with `days: 1` covers a disjoint 24 h window each time,
-    # so papers are not duplicated across runs.
+    # The look-back window (config `days`) overlaps by a few days; the
+    # committed seen-id cache prevents duplicate notifications and lets a
+    # missed/failed run be recovered on the next run.
     - cron: "0 23 * * *"
   workflow_dispatch:        # allow manual runs from the Actions tab
     inputs:
       days:
         description: "Look back this many days"
         required: false
-        default: "1"
+        default: "3"
+
+# Needed to commit the updated seen-id cache back to the repo.
+permissions:
+  contents: write
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    # Avoid overlapping runs corrupting the cache commit.
+    concurrency:
+      group: arxiv2discord
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -30,4 +39,16 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          python arxiv2discord.py --days "${{ github.event.inputs.days || 1 }}"
+          python arxiv2discord.py --days "${{ github.event.inputs.days || 3 }}"
+
+      - name: Commit updated seen-id cache
+        run: |
+          if [[ -n "$(git status --porcelain seen_ids.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add seen_ids.json
+            git commit -m "Update seen-id cache [skip ci]"
+            git push
+          else
+            echo "No change to seen_ids.json."
+          fi
