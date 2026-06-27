@@ -5,8 +5,7 @@ arxiv2discord
 Fetch new arXiv astro-ph papers via the official arXiv API, score them by
 keyword, and post matches to a Discord channel through a webhook.
 
-Based in spirit on Y-Masayuki/arXiv-owl (fork of jinshisai/arXiv-owl, in turn
-based on fkubota/Carrier-Owl), but rewritten to use the official arXiv API
+Inspired by jinshisai/arXiv-owl, but rewritten to use the official arXiv API
 instead of HTML scraping and to deliver to Discord instead of Slack.
 """
 
@@ -323,29 +322,18 @@ def translate_results(results: list[Result], api_key: str,
 # --------------------------------------------------------------------------- #
 # Discord delivery
 # --------------------------------------------------------------------------- #
-def _score_marker(score: float) -> str:
-    if score >= 3:
-        return "🔴"
-    if score >= 2:
-        return "🟠"
-    return "🔵"
-
-
 def build_paper_text(result: Result, highlight: set | None = None) -> str:
     """Render one paper as a full-width Markdown message (not an embed)."""
     highlight = highlight or set()
     revised = result.updated.date() != result.published.date()
 
-    flags = ""
-    if result.hit_authors:
-        flags += "⭐"
-    if revised:
-        flags += "🔄"
-    marker = _score_marker(result.score)
+    # 🔄 marks a revised paper (v2, v3, …); watch-listed authors are shown in
+    # bold within the author list rather than with an icon.
+    prefix = "🔄 " if revised else ""
 
     hit_str = ", ".join(result.hit_keywords) or "—"
     lines = [
-        f"## {marker}{flags} [{result.title}]({result.url})",
+        f"## {prefix}[{result.title}]({result.url})",
         f"**Score** `{result.score:g}`  |  **Hits** {hit_str}",
         f"**Authors** {result.author_str(highlight=highlight)}",
         f"**Categories** {', '.join(result.categories)}",
@@ -391,15 +379,17 @@ def post_to_discord(webhook_url: str, results: list[Result],
     today = dt.date.today()
     cats = ", ".join(config["categories"])
     # Markdown H1 so the digest header is large; no embed (full width).
+    # flags=4 (SUPPRESS_EMBEDS) stops Discord auto-unfurling the arXiv/PDF links
+    # into preview cards that would crowd out the abstract.
     header = (f"# arXiv astro-ph digest — {today:%Y-%m-%d}\n"
               f"{len(results)} matching paper(s)  ·  categories: {cats}")
-    _send(webhook_url, {"content": header}, dry_run)
+    _send(webhook_url, {"content": header, "flags": 4}, dry_run)
 
     highlight = set(config.get("highlight_authors", []))
     for result in results:
         text = build_paper_text(result, highlight)
         for chunk in _split_message(text):
-            _send(webhook_url, {"content": chunk}, dry_run)
+            _send(webhook_url, {"content": chunk, "flags": 4}, dry_run)
 
 
 def _send(webhook_url: str, payload: dict, dry_run: bool) -> None:

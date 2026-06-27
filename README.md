@@ -3,12 +3,22 @@
 Deliver new **arXiv astro-ph** papers that match your keywords to a **Discord**
 channel, automatically, every day — for free via GitHub Actions.
 
-This is a Discord-focused successor to
-[arXiv-owl](https://github.com/Y-Masayuki/arXiv-owl). It differs in two ways:
+## Background
 
-- **Official arXiv API** (`export.arxiv.org/api`) instead of scraping the
-  advanced-search HTML, so it does not break when arXiv changes its page layout.
-- **Discord webhook** delivery (full-width Markdown messages) instead of Slack.
+I used to track new astro-ph papers with a Slack notifier, but I moved my daily
+workflow to Discord. So I rebuilt the idea from scratch around the **official
+arXiv API** (rather than scraping arXiv's HTML, which breaks whenever the page
+layout changes) and Discord webhooks, and added a few things I wanted —
+Japanese translation, an author watch-list, de-duplication, and detection of
+revised papers. I'm sharing it publicly so anyone can set up the same flow for
+their own keywords in a few minutes.
+
+Key features:
+
+- **Official arXiv API** source — robust against arXiv HTML changes.
+- **Discord webhook** delivery as full-width Markdown messages.
+- Keyword scoring, author watch-list, optional **Japanese (DeepL)** translation.
+- Catches **revised papers (v2, v3, …)** and never sends duplicates.
 
 ## How it works
 
@@ -146,11 +156,12 @@ CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
   still sends the English version. LaTeX math in abstracts (`$...$`) may be
   rendered imperfectly by the translator.
 
-## Credits
+## Author
 
-- [Y-Masayuki/arXiv-owl](https://github.com/Y-Masayuki/arXiv-owl)
-- [jinshisai/arXiv-owl](https://github.com/jinshisai/arXiv-owl)
-- [fkubota/Carrier-Owl](https://github.com/fkubota/Carrier-Owl) (original idea)
+Masayuki Yamaguchi ([@Y-Masayuki](https://github.com/Y-Masayuki)) ·
+ORCID [0000-0002-8185-9882](https://orcid.org/0000-0002-8185-9882)
+
+If you use this tool, a link back to this repository is appreciated.
 
 ## License
 
