@@ -12,11 +12,11 @@ on:
       days:
         description: "Look back this many days"
         required: false
-        default: "7"
+        default: "3"
       disable_cache:
-        description: "Disable de-dup cache (notify even if already seen) — for testing"
+        description: "Disable de-dup cache (notify even if already seen) — testing only"
         type: boolean
-        default: true
+        default: false
 
 # Needed to commit the updated seen-id cache back to the repo.
 permissions:

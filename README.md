@@ -53,68 +53,90 @@ treated as new and re-notified.
 > reasonable window. For a brand-new deployment, run a one-time catch-up (see
 > below) to backfill recent matches.
 
-## Setup
+## Installation (no coding required)
 
-### 1. Create a Discord webhook
+You don't need to install anything on your computer. Everything runs for free on
+GitHub Actions, and every step below is done in your web browser. It takes about
+10 minutes.
 
-In Discord: **Server Settings → Integrations → Webhooks → New Webhook**, pick
-the target channel, then **Copy Webhook URL**. The URL looks like
-`https://discord.com/api/webhooks/<id>/<token>`.
+**What you need:** a [GitHub](https://github.com) account, and a Discord server
+where you are allowed to create a webhook (your own server works — you can make
+one for free). Japanese translation is optional and needs a free DeepL key.
 
-### 2. Configure keywords
+### Step 1 — Copy this repository into your account
 
-Edit [`config.yaml`](config.yaml). Add/remove keywords and adjust weights, the
-`categories` you watch, the look-back window `days`, and `score_threshold`.
+At the top of this repository page, click **Use this template → Create a new
+repository** (or **Fork** if you prefer). Give it a name like `my-arxiv2discord`
+and create it. Everything from here on happens in *your* copy.
 
-### 3. Run it automatically (GitHub Actions — recommended)
+### Step 2 — Create a Discord webhook
 
-Fork/push this repo to your account, then add the webhook URL as a secret:
+A webhook is the address your papers get posted to.
 
-**Repo → Settings → Secrets and variables → Actions → New repository secret**
-- Name: `DISCORD_WEBHOOK_URL`
-- Value: your webhook URL
+1. In Discord, open the channel you want, click the ⚙️ (**Edit Channel**).
+2. Go to **Integrations → Webhooks → New Webhook**.
+3. Give it a name (e.g. `arXiv`), then click **Copy Webhook URL**.
 
-If you enable Japanese translation (`translate: true` in `config.yaml`), add a
-second secret:
-- Name: `DEEPL_API_KEY`
-- Value: your DeepL API key (get a free one at
-  [DeepL API Free](https://www.deepl.com/pro-api); free keys end with `:fx`).
+The URL looks like `https://discord.com/api/webhooks/<id>/<token>`. Keep it
+secret — anyone with it can post to your channel.
 
-The workflow in [`.github/workflows/arxiv2discord.yml`](.github/workflows/arxiv2discord.yml)
-runs daily (23:00 UTC = 08:00 JST). You can also trigger it manually from the
-**Actions** tab ("Run workflow"), optionally overriding the look-back days.
+### Step 3 — Add the webhook as a secret
 
-> Note: the scheduled run uses an overlapping look-back window (`days: 3` by
-> default) made safe by the `seen_ids.json` cache, so weekends or a skipped run
-> never cause a miss or a duplicate. Manual runs have a **Disable de-dup cache**
-> toggle (on by default) so you can re-post while testing; turn it off for
-> normal de-duplicated runs.
+In your repository: **Settings → Secrets and variables → Actions → New
+repository secret**.
 
-### 4. Run it locally (optional)
+- **Name:** `DISCORD_WEBHOOK_URL`
+- **Secret:** paste the webhook URL from Step 2 → **Add secret**
+
+*(Optional, for Japanese translation)* Get a free key at
+[DeepL API Free](https://www.deepl.com/pro-api) (free keys end with `:fx`) and
+add a second secret named `DEEPL_API_KEY`. If you skip this, set
+`translate: false` in `config.yaml` (Step 4) to send English only.
+
+### Step 4 — Choose your keywords
+
+Open **`config.yaml`** in your repository and click the ✏️ (**Edit this file**).
+Replace the example keywords with your own (`keyword: weight`), adjust the
+`categories` you want to watch, and set `score_threshold`. Optionally turn
+`translate` on/off and list `highlight_authors` (e.g. your own name). Scroll
+down and click **Commit changes**. No tools needed — GitHub edits it in place.
+
+### Step 5 — Turn on Actions and do a first test run
+
+1. Open the **Actions** tab. If prompted, click **I understand my workflows,
+   enable them**.
+2. Select **arxiv2discord** on the left, then **Run workflow** (top right).
+3. Tick **Disable de-dup cache** so you get notifications even on the first run,
+   set days to e.g. `7`, and click **Run workflow**.
+4. After a minute the run turns green and the papers appear in your Discord
+   channel. 🎉
+
+### Step 6 — That's it: it now runs every day
+
+The workflow runs automatically every day (23:00 UTC = 08:00 JST) and posts only
+**new or revised** papers — duplicates are filtered out by the `seen_ids.json`
+cache, so you never get the same paper twice, and a skipped/failed run is
+recovered next time. To run by hand later, use **Run workflow** with **Disable
+de-dup cache** left unticked.
+
+---
+
+### Advanced: run from the command line (optional)
+
+For development or a one-off catch-up you can run it locally:
 
 ```bash
 pip install -r requirements.txt
 export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/…"
+export DEEPL_API_KEY="…:fx"              # only if translate: true
 
-python arxiv2discord.py                 # use config.yaml defaults
-python arxiv2discord.py --days 3        # look back 3 days
-python arxiv2discord.py --days 3 --dry-run   # print payload, send nothing
+python arxiv2discord.py                       # use config.yaml defaults
+python arxiv2discord.py --days 3 --dry-run    # print payload, send nothing
+python arxiv2discord.py --days 60 --no-state  # one-time catch-up (re-posts all)
 ```
 
-`--dry-run` prints the exact JSON that would be sent to Discord — handy for
-tuning keywords without spamming your channel.
-
-### One-time catch-up (recover older matches)
-
-When you first deploy — or if a paper's announcement was delayed — post all
-matches from a wider window, ignoring the cache:
-
-```bash
-python arxiv2discord.py --days 60 --no-state
-```
-
-`--no-state` neither reads nor writes `seen_ids.json`, so it will (re)post every
-match in the window. Use it deliberately; the daily Action keeps `--state` on.
+`--dry-run` prints the exact messages without sending them; `--no-state`
+ignores the de-dup cache (handy to backfill older matches after first setup).
 
 ## Configuration reference
 
