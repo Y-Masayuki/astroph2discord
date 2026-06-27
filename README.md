@@ -8,7 +8,7 @@ This is a Discord-focused successor to
 
 - **Official arXiv API** (`export.arxiv.org/api`) instead of scraping the
   advanced-search HTML, so it does not break when arXiv changes its page layout.
-- **Discord webhook** delivery (rich embeds, message chunking) instead of Slack.
+- **Discord webhook** delivery (full-width Markdown messages) instead of Slack.
 
 ## How it works
 
@@ -17,8 +17,8 @@ This is a Discord-focused successor to
 2. Score each paper: sum the weights of the keywords found in its title +
    abstract (case-insensitive substring match).
 3. Drop papers already notified in a previous run (a committed
-   `seen_ids.json` cache), then post the rest to Discord as embeds, packed so
-   each message stays within Discord's limits (≤10 embeds and ≤6000 chars).
+   `seen_ids.json` cache), then post the rest to Discord as full-width Markdown
+   messages, split automatically to stay under Discord's 2000-char message limit.
 
 ### Why a look-back window + a cache?
 
@@ -113,11 +113,14 @@ match in the window. Use it deliberately; the daily Action keeps `--state` on.
 | `author_bonus`       | Score added when a highlighted author appears (set ≥ threshold to     |
 |                      | guarantee your own papers always notify).                            |
 
-Each embed shows the title (linked), score & hit keywords, authors, categories,
-the arXiv **Comments** field (e.g. "Accepted to ApJ"), the journal reference
-when available, a direct **PDF** link, the abstract, and — if enabled — the
-Japanese title and abstract. Revised papers (v2, v3, …) are flagged 🔄, and
-watch-listed authors ⭐.
+Each paper is posted as a full-width message: a large linked title heading
+(prefixed with a score marker 🔴/🟠/🔵, plus ⭐ for watch-listed authors and 🔄
+for revisions), then score & hit keywords, authors, categories, the arXiv
+**Comments** field (e.g. "Accepted to ApJ"), the journal reference when
+available, a direct **PDF** link, the full English abstract, and — if enabled —
+the Japanese abstract. Long papers are split across a couple of messages so the
+English abstract is always shown in full. (Discord does not allow custom body
+font sizes; headings are the only enlarged text.)
 
 CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
 
@@ -141,8 +144,7 @@ CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
   catch-up to backfill.
 - Translation is best-effort: if DeepL errors or the key is missing, the run
   still sends the English version. LaTeX math in abstracts (`$...$`) may be
-  rendered imperfectly by the translator. With translation on, each abstract is
-  truncated more aggressively so both languages fit Discord's embed limits.
+  rendered imperfectly by the translator.
 
 ## Credits
 

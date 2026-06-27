@@ -31,12 +31,8 @@ ARXIV_API = "http://export.arxiv.org/api/query"
 USER_AGENT = "arxiv2discord/1.0 (https://github.com/Y-Masayuki/astroph2discord)"
 ARXIV_PAGE_SIZE = 100          # results per API request
 ARXIV_RATE_LIMIT_SEC = 3.0     # arXiv asks for >=3 s between requests
-DISCORD_MAX_EMBEDS = 10        # Discord allows at most 10 embeds per message
-DISCORD_DESC_LIMIT = 2000      # keep abstracts well under the 4096 embed limit
-# Discord rejects a message whose embeds sum to >6000 characters. Pack messages
-# under a safe budget below that hard limit.
-DISCORD_TOTAL_CHAR_BUDGET = 5800
-DISCORD_TITLE_LIMIT = 256
+# Discord hard-caps a normal message at 2000 characters; split below it.
+DISCORD_CONTENT_LIMIT = 1900
 
 # Default: all six astro-ph subcategories (modern papers carry these, not the
 # legacy bare "astro-ph" tag).
@@ -67,7 +63,6 @@ class Result:
     updated: dt.datetime
     comment: str = ""
     journal_ref: str = ""
-    title_ja: str = ""
     abstract_ja: str = ""
     score: float = 0.0
     hit_keywords: list = field(default_factory=list)
@@ -303,17 +298,14 @@ def translate_texts(texts: list[str], api_key: str,
 
 def translate_results(results: list[Result], api_key: str,
                       target_lang: str = "JA") -> None:
-    """Fill in title_ja / abstract_ja for each result, in place.
+    """Fill in abstract_ja for each result, in place.
 
     On any DeepL error we log and continue with English only — translation is a
     nice-to-have and must never block notifications.
     """
     if not results:
         return
-    payload = []
-    for r in results:
-        payload.append(r.title)
-        payload.append(r.abstract)
+    payload = [r.abstract for r in results]
     try:
         translated = translate_texts(payload, api_key, target_lang)
     except (requests.RequestException, KeyError, ValueError) as exc:
@@ -324,118 +316,90 @@ def translate_results(results: list[Result], api_key: str,
         print("WARNING: DeepL returned an unexpected count; skipping translation.",
               file=sys.stderr)
         return
-    for idx, r in enumerate(results):
-        r.title_ja = translated[2 * idx]
-        r.abstract_ja = translated[2 * idx + 1]
+    for r, ja in zip(results, translated):
+        r.abstract_ja = ja
 
 
 # --------------------------------------------------------------------------- #
 # Discord delivery
 # --------------------------------------------------------------------------- #
-def _truncate(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
-def _score_color(score: float) -> int:
+def _score_marker(score: float) -> str:
     if score >= 3:
-        return 0xE74C3C  # red
+        return "🔴"
     if score >= 2:
-        return 0xE67E22  # orange
-    return 0x3498DB      # blue
+        return "🟠"
+    return "🔵"
 
 
-def build_embed(result: Result, highlight: set | None = None) -> dict:
+def build_paper_text(result: Result, highlight: set | None = None) -> str:
+    """Render one paper as a full-width Markdown message (not an embed)."""
     highlight = highlight or set()
     revised = result.updated.date() != result.published.date()
 
-    # Title: flag revisions (🔄) and authored-by-watchlist papers (⭐).
-    title = result.title
     flags = ""
     if result.hit_authors:
         flags += "⭐"
     if revised:
         flags += "🔄"
-    if flags:
-        title = f"{flags} {title}"
+    marker = _score_marker(result.score)
 
-    # When a Japanese translation exists, each abstract gets a smaller budget so
-    # both fit; otherwise the English abstract gets the full budget.
-    translated = bool(result.abstract_ja)
-    abs_budget = 700 if translated else DISCORD_DESC_LIMIT - 300
-
-    lines = []
-    if result.title_ja:
-        lines.append(f"**🇯🇵 {result.title_ja}**")
     hit_str = ", ".join(result.hit_keywords) or "—"
-    lines.append(f"**Score** `{result.score:g}`  |  **Hits** {hit_str}")
-    lines.append(f"**Authors** {result.author_str(highlight=highlight)}")
-    lines.append(f"**Categories** {', '.join(result.categories)}")
+    lines = [
+        f"## {marker}{flags} [{result.title}]({result.url})",
+        f"**Score** `{result.score:g}`  |  **Hits** {hit_str}",
+        f"**Authors** {result.author_str(highlight=highlight)}",
+        f"**Categories** {', '.join(result.categories)}",
+    ]
     if result.comment:
-        lines.append(f"**Comments** {_truncate(result.comment, 300)}")
+        lines.append(f"**Comments** {result.comment}")
     if result.journal_ref:
-        lines.append(f"**Journal** {_truncate(result.journal_ref, 200)}")
+        lines.append(f"**Journal** {result.journal_ref}")
     lines.append(f"**PDF** {result.pdf_url}")
-    lines.append("")
-    lines.append(_truncate(result.abstract, abs_budget))
-    if translated:
-        lines.append("")
-        lines.append("**【和訳】** " + _truncate(result.abstract_ja, abs_budget))
 
-    footer = f"arXiv:{result.arxiv_id}  ·  submitted {result.published:%Y-%m-%d}"
+    sub = f"arXiv:{result.arxiv_id} · submitted {result.published:%Y-%m-%d}"
     if revised:
-        footer += f"  ·  revised {result.updated:%Y-%m-%d}"
-    return {
-        "title": _truncate(title, DISCORD_TITLE_LIMIT),
-        "url": result.url,
-        "description": _truncate("\n".join(lines), 4096),
-        "color": _score_color(result.score),
-        "footer": {"text": footer},
-    }
+        sub += f" · revised {result.updated:%Y-%m-%d}"
+    lines.append(f"-# {sub}")
+
+    lines.append("")
+    lines.append(result.abstract)                       # full English abstract
+    if result.abstract_ja:
+        lines.append("")
+        lines.append(f"**【和訳】**\n{result.abstract_ja}")
+    return "\n".join(lines)
+
+
+def _split_message(text: str, limit: int = DISCORD_CONTENT_LIMIT) -> list[str]:
+    """Split text into <=limit-char chunks, preferring line/word boundaries."""
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        window = remaining[:limit]
+        cut = window.rfind("\n")
+        if cut < limit // 2:            # no convenient newline; fall back to a space
+            space = window.rfind(" ")
+            cut = space if space > 0 else limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def post_to_discord(webhook_url: str, results: list[Result],
                     config: dict, dry_run: bool = False) -> None:
     today = dt.date.today()
     cats = ", ".join(config["categories"])
-    header = (f"📡 **arXiv astro-ph digest — {today:%Y-%m-%d}**\n"
+    # Markdown H1 so the digest header is large; no embed (full width).
+    header = (f"# arXiv astro-ph digest — {today:%Y-%m-%d}\n"
               f"{len(results)} matching paper(s)  ·  categories: {cats}")
-
     _send(webhook_url, {"content": header}, dry_run)
 
     highlight = set(config.get("highlight_authors", []))
-
-    # Discord limits a message to <=10 embeds AND <=6000 chars across all of
-    # them combined. Pack greedily, respecting both constraints.
-    for batch in _pack_embeds(build_embed(r, highlight) for r in results):
-        _send(webhook_url, {"embeds": batch}, dry_run)
-
-
-def _embed_len(embed: dict) -> int:
-    """Character count Discord uses toward the 6000-per-message limit."""
-    total = len(embed.get("title", "")) + len(embed.get("description", ""))
-    total += len(embed.get("footer", {}).get("text", ""))
-    total += len(embed.get("author", {}).get("name", ""))
-    for f in embed.get("fields", []):
-        total += len(f.get("name", "")) + len(f.get("value", ""))
-    return total
-
-
-def _pack_embeds(embeds: Iterable[dict]) -> list[list[dict]]:
-    """Group embeds into messages of <=10 embeds and <=budget total chars."""
-    batches: list[list[dict]] = []
-    current: list[dict] = []
-    running = 0
-    for embed in embeds:
-        size = _embed_len(embed)
-        if current and (len(current) >= DISCORD_MAX_EMBEDS
-                        or running + size > DISCORD_TOTAL_CHAR_BUDGET):
-            batches.append(current)
-            current, running = [], 0
-        current.append(embed)
-        running += size
-    if current:
-        batches.append(current)
-    return batches
+    for result in results:
+        text = build_paper_text(result, highlight)
+        for chunk in _split_message(text):
+            _send(webhook_url, {"content": chunk}, dry_run)
 
 
 def _send(webhook_url: str, payload: dict, dry_run: bool) -> None:
