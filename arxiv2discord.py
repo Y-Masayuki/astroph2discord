@@ -65,13 +65,26 @@ class Result:
     categories: list
     published: dt.datetime
     updated: dt.datetime
+    comment: str = ""
+    journal_ref: str = ""
+    title_ja: str = ""
+    abstract_ja: str = ""
     score: float = 0.0
     hit_keywords: list = field(default_factory=list)
+    hit_authors: list = field(default_factory=list)
 
-    def author_str(self, limit: int = 8) -> str:
-        if len(self.authors) <= limit:
-            return ", ".join(self.authors)
-        return ", ".join(self.authors[:limit]) + f", … (+{len(self.authors) - limit})"
+    def author_str(self, limit: int = 8, highlight: set | None = None) -> str:
+        highlight = highlight or set()
+
+        def render(name: str) -> str:
+            if any(h in name.lower() for h in highlight):
+                return f"**{name}**"
+            return name
+
+        names = [render(a) for a in self.authors]
+        if len(names) <= limit:
+            return ", ".join(names)
+        return ", ".join(names[:limit]) + f", … (+{len(self.authors) - limit})"
 
 
 # --------------------------------------------------------------------------- #
@@ -91,9 +104,22 @@ def load_config(path: str | None = None) -> dict:
     # 'updated' catches replacements / late updates within the window;
     # 'submitted' uses only the original v1 date.
     config.setdefault("date_field", "updated")
-    # normalise keyword scores to float
+
+    # Translation (DeepL). Requires the DEEPL_API_KEY environment variable.
+    config.setdefault("translate", False)
+    config.setdefault("translate_lang", "JA")
+
+    # Author highlighting. Papers by these authors get a ⭐ and bold names;
+    # `author_bonus` is added to their score (set >= score_threshold to make
+    # sure your own papers always notify, even with no keyword hit).
+    config.setdefault("highlight_authors", [])
+    config.setdefault("author_bonus", 0)
+
+    # normalise types
     config["keywords"] = {str(k): float(v) for k, v in config["keywords"].items()}
     config["score_threshold"] = float(config["score_threshold"])
+    config["author_bonus"] = float(config["author_bonus"])
+    config["highlight_authors"] = [str(a).lower() for a in config["highlight_authors"]]
     return config
 
 
@@ -118,6 +144,9 @@ def _entry_to_result(entry) -> Result:
     if hasattr(entry, "arxiv_primary_category"):
         primary = entry.arxiv_primary_category.get("term", "")
 
+    comment = " ".join(getattr(entry, "arxiv_comment", "").split())
+    journal_ref = " ".join(getattr(entry, "arxiv_journal_ref", "").split())
+
     return Result(
         arxiv_id=arxiv_id,
         url=entry.id,
@@ -129,6 +158,8 @@ def _entry_to_result(entry) -> Result:
         categories=categories,
         published=published,
         updated=updated,
+        comment=comment,
+        journal_ref=journal_ref,
     )
 
 
@@ -214,17 +245,88 @@ def score_article(result: Result, keywords: dict) -> tuple[float, list]:
     return total, hits
 
 
-def filter_and_score(results: list[Result], keywords: dict,
-                     threshold: float) -> list[Result]:
+def matched_authors(result: Result, highlight_authors: list) -> list:
+    """Return the display names of authors matching the highlight list."""
+    hits = []
+    for name in result.authors:
+        low = name.lower()
+        if any(h in low for h in highlight_authors):
+            hits.append(name)
+    return hits
+
+
+def filter_and_score(results: list[Result], keywords: dict, threshold: float,
+                     highlight_authors: list | None = None,
+                     author_bonus: float = 0.0) -> list[Result]:
+    highlight_authors = highlight_authors or []
     scored = []
     for result in results:
         score, hits = score_article(result, keywords)
+        author_hits = matched_authors(result, highlight_authors)
+        if author_hits:
+            score += author_bonus
         if score > 0 and score >= threshold:
             result.score = score
             result.hit_keywords = hits
+            result.hit_authors = author_hits
             scored.append(result)
     scored.sort(key=lambda r: r.score, reverse=True)
     return scored
+
+
+# --------------------------------------------------------------------------- #
+# Translation (DeepL)
+# --------------------------------------------------------------------------- #
+DEEPL_BATCH = 40  # DeepL accepts up to 50 texts per request
+
+
+def translate_texts(texts: list[str], api_key: str,
+                    target_lang: str = "JA") -> list[str]:
+    """Translate a list of texts via the DeepL API, preserving order."""
+    if not texts:
+        return []
+    # Free keys end with ":fx" and use the api-free host.
+    host = "api-free.deepl.com" if api_key.rstrip().endswith(":fx") else "api.deepl.com"
+    endpoint = f"https://{host}/v2/translate"
+    headers = {"Authorization": f"DeepL-Auth-Key {api_key}"}
+
+    out: list[str] = []
+    for i in range(0, len(texts), DEEPL_BATCH):
+        chunk = texts[i: i + DEEPL_BATCH]
+        data = [("target_lang", target_lang)] + [("text", t) for t in chunk]
+        resp = requests.post(endpoint, headers=headers, data=data, timeout=60)
+        resp.raise_for_status()
+        out.extend(tr["text"] for tr in resp.json()["translations"])
+        time.sleep(0.5)
+    return out
+
+
+def translate_results(results: list[Result], api_key: str,
+                      target_lang: str = "JA") -> None:
+    """Fill in title_ja / abstract_ja for each result, in place.
+
+    On any DeepL error we log and continue with English only — translation is a
+    nice-to-have and must never block notifications.
+    """
+    if not results:
+        return
+    payload = []
+    for r in results:
+        payload.append(r.title)
+        payload.append(r.abstract)
+    try:
+        translated = translate_texts(payload, api_key, target_lang)
+    except (requests.RequestException, KeyError, ValueError) as exc:
+        print(f"WARNING: DeepL translation failed, sending English only: {exc}",
+              file=sys.stderr)
+        return
+    if len(translated) != len(payload):
+        print("WARNING: DeepL returned an unexpected count; skipping translation.",
+              file=sys.stderr)
+        return
+    for idx, r in enumerate(results):
+        r.title_ja = translated[2 * idx]
+        r.abstract_ja = translated[2 * idx + 1]
 
 
 # --------------------------------------------------------------------------- #
@@ -242,26 +344,50 @@ def _score_color(score: float) -> int:
     return 0x3498DB      # blue
 
 
-def build_embed(result: Result) -> dict:
+def build_embed(result: Result, highlight: set | None = None) -> dict:
+    highlight = highlight or set()
     revised = result.updated.date() != result.published.date()
-    title = result.title
-    if revised:
-        title = "🔄 " + title  # flag replacements (v2, v3, …)
 
-    desc_lines = [
-        f"**Score** `{result.score:g}`  |  **Hits** {', '.join(result.hit_keywords)}",
-        f"**Authors** {result.author_str()}",
-        f"**Categories** {', '.join(result.categories)}",
-        "",
-        _truncate(result.abstract, DISCORD_DESC_LIMIT - 300),
-    ]
+    # Title: flag revisions (🔄) and authored-by-watchlist papers (⭐).
+    title = result.title
+    flags = ""
+    if result.hit_authors:
+        flags += "⭐"
+    if revised:
+        flags += "🔄"
+    if flags:
+        title = f"{flags} {title}"
+
+    # When a Japanese translation exists, each abstract gets a smaller budget so
+    # both fit; otherwise the English abstract gets the full budget.
+    translated = bool(result.abstract_ja)
+    abs_budget = 700 if translated else DISCORD_DESC_LIMIT - 300
+
+    lines = []
+    if result.title_ja:
+        lines.append(f"**🇯🇵 {result.title_ja}**")
+    hit_str = ", ".join(result.hit_keywords) or "—"
+    lines.append(f"**Score** `{result.score:g}`  |  **Hits** {hit_str}")
+    lines.append(f"**Authors** {result.author_str(highlight=highlight)}")
+    lines.append(f"**Categories** {', '.join(result.categories)}")
+    if result.comment:
+        lines.append(f"**Comments** {_truncate(result.comment, 300)}")
+    if result.journal_ref:
+        lines.append(f"**Journal** {_truncate(result.journal_ref, 200)}")
+    lines.append(f"**PDF** {result.pdf_url}")
+    lines.append("")
+    lines.append(_truncate(result.abstract, abs_budget))
+    if translated:
+        lines.append("")
+        lines.append("**【和訳】** " + _truncate(result.abstract_ja, abs_budget))
+
     footer = f"arXiv:{result.arxiv_id}  ·  submitted {result.published:%Y-%m-%d}"
     if revised:
         footer += f"  ·  revised {result.updated:%Y-%m-%d}"
     return {
         "title": _truncate(title, DISCORD_TITLE_LIMIT),
         "url": result.url,
-        "description": "\n".join(desc_lines),
+        "description": _truncate("\n".join(lines), 4096),
         "color": _score_color(result.score),
         "footer": {"text": footer},
     }
@@ -276,9 +402,11 @@ def post_to_discord(webhook_url: str, results: list[Result],
 
     _send(webhook_url, {"content": header}, dry_run)
 
+    highlight = set(config.get("highlight_authors", []))
+
     # Discord limits a message to <=10 embeds AND <=6000 chars across all of
     # them combined. Pack greedily, respecting both constraints.
-    for batch in _pack_embeds(build_embed(r) for r in results):
+    for batch in _pack_embeds(build_embed(r, highlight) for r in results):
         _send(webhook_url, {"embeds": batch}, dry_run)
 
 
@@ -368,7 +496,9 @@ def run(config_path: str | None, webhook_url: str | None,
     articles = fetch_articles(config["categories"], config["days"],
                               config["max_results"], config["date_field"])
     matches = filter_and_score(articles, config["keywords"],
-                               config["score_threshold"])
+                               config["score_threshold"],
+                               config["highlight_authors"],
+                               config["author_bonus"])
 
     # De-duplicate against papers already notified in previous runs. The key is
     # the versioned arXiv id (e.g. 2605.11486v2), so a v2 replacement is treated
@@ -387,6 +517,15 @@ def run(config_path: str | None, webhook_url: str | None,
     if not dry_run and not webhook_url:
         print("ERROR: DISCORD_WEBHOOK_URL is not set.", file=sys.stderr)
         return 1
+
+    # Optional Japanese translation (DeepL). Never blocks notification.
+    if config["translate"]:
+        deepl_key = os.getenv("DEEPL_API_KEY")
+        if deepl_key:
+            translate_results(fresh, deepl_key, config["translate_lang"])
+        else:
+            print("WARNING: translate is on but DEEPL_API_KEY is not set; "
+                  "sending English only.", file=sys.stderr)
 
     post_to_discord(webhook_url, fresh, config, dry_run=dry_run)
 

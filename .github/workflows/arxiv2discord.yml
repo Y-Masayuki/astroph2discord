@@ -38,6 +38,7 @@ jobs:
       - name: Run arxiv2discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
         run: |
           python arxiv2discord.py --days "${{ github.event.inputs.days || 3 }}"
 

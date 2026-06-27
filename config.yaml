@@ -28,6 +28,27 @@ max_results: 400
 # Only notify when the summed keyword score is >= this value.
 score_threshold: 0
 
+# ---------------------------------------------------------------------------
+# Japanese translation (DeepL)
+# ---------------------------------------------------------------------------
+# Set translate: true to append a Japanese translation of the title and
+# abstract. Requires a DeepL API key in the DEEPL_API_KEY environment variable
+# (add it as a GitHub Actions secret). Free keys end with ":fx".
+translate: true
+translate_lang: JA
+
+# ---------------------------------------------------------------------------
+# Author highlighting (optional)
+# ---------------------------------------------------------------------------
+# Papers by any of these authors are flagged with ⭐ and their names bolded.
+# Matching is case-insensitive substring (use a surname or "First Last").
+# Set author_bonus >= score_threshold to guarantee your own papers always
+# notify, even if no keyword matches. Leave the list empty to disable.
+highlight_authors: []
+#  - Yamaguchi
+#  - Machida
+author_bonus: 0
+
 # Keyword: weight. A paper's score = sum of weights of keywords found in its
 # title + abstract (case-insensitive substring match).
 keywords:

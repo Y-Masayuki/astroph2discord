@@ -57,6 +57,12 @@ Fork/push this repo to your account, then add the webhook URL as a secret:
 - Name: `DISCORD_WEBHOOK_URL`
 - Value: your webhook URL
 
+If you enable Japanese translation (`translate: true` in `config.yaml`), add a
+second secret:
+- Name: `DEEPL_API_KEY`
+- Value: your DeepL API key (get a free one at
+  [DeepL API Free](https://www.deepl.com/pro-api); free keys end with `:fx`).
+
 The workflow in [`.github/workflows/arxiv2discord.yml`](.github/workflows/arxiv2discord.yml)
 runs daily (23:00 UTC = 08:00 JST). You can also trigger it manually from the
 **Actions** tab ("Run workflow"), optionally overriding the look-back days.
@@ -95,12 +101,23 @@ match in the window. Use it deliberately; the daily Action keeps `--state` on.
 
 | Key               | Meaning                                                                   |
 | ----------------- | ------------------------------------------------------------------------- |
-| `categories`      | arXiv categories to query (default: all six `astro-ph.*`).                |
-| `days`            | Look-back window in days. Overlap is safe thanks to the seen-id cache.    |
-| `date_field`      | `updated` (catches v2 replacements & updates) or `submitted` (v1 only).   |
-| `max_results`     | Safety cap on papers pulled from the API per run.                         |
-| `score_threshold` | Minimum summed score required to notify.                                  |
-| `keywords`        | `keyword: weight` map; scored against title + abstract.                   |
+| `categories`         | arXiv categories to query (default: all six `astro-ph.*`).             |
+| `days`               | Look-back window in days. Overlap is safe thanks to the seen-id cache. |
+| `date_field`         | `updated` (catches v2 replacements & updates) or `submitted` (v1 only).|
+| `max_results`        | Safety cap on papers pulled from the API per run.                      |
+| `score_threshold`    | Minimum summed score required to notify.                               |
+| `keywords`           | `keyword: weight` map; scored against title + abstract.               |
+| `translate`          | `true` to append a Japanese translation (needs `DEEPL_API_KEY`).      |
+| `translate_lang`     | DeepL target language code (default `JA`).                            |
+| `highlight_authors`  | Authors to flag with ⭐ and bold (case-insensitive substring).         |
+| `author_bonus`       | Score added when a highlighted author appears (set ≥ threshold to     |
+|                      | guarantee your own papers always notify).                            |
+
+Each embed shows the title (linked), score & hit keywords, authors, categories,
+the arXiv **Comments** field (e.g. "Accepted to ApJ"), the journal reference
+when available, a direct **PDF** link, the abstract, and — if enabled — the
+Japanese title and abstract. Revised papers (v2, v3, …) are flagged 🔄, and
+watch-listed authors ⭐.
 
 CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
 
@@ -122,6 +139,10 @@ CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
 - The arXiv API cannot sort by *announcement* date. A paper announced long after
   its submission/update can still fall outside the window; use the one-time
   catch-up to backfill.
+- Translation is best-effort: if DeepL errors or the key is missing, the run
+  still sends the English version. LaTeX math in abstracts (`$...$`) may be
+  rendered imperfectly by the translator. With translation on, each abstract is
+  truncated more aggressively so both languages fit Discord's embed limits.
 
 ## Credits
 
