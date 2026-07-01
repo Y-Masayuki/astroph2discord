@@ -41,22 +41,6 @@ with an optional Japanese translation:
    `seen_ids.json` cache), then post the rest to Discord as full-width Markdown
    messages, split automatically to stay under Discord's 2000-char message limit.
 
-### Why a look-back window + a cache?
-
-arXiv's API can only sort by submission or last-updated date, not by the date a
-paper is *announced* in the daily listing. To avoid missing papers when a
-scheduled run fails, is skipped, or runs over a weekend, the window
-(`days`) overlaps by a few days. The `seen_ids.json` cache — committed back by
-the Action — guarantees an overlapping window never produces duplicate
-notifications, and lets a missed run be recovered on the next one. The cache
-key includes the version (e.g. `2605.11486v2`), so a replacement (v2) is
-treated as new and re-notified.
-
-> Limitation: a paper whose *announcement* is delayed weeks after its original
-> submission (e.g. a long moderation hold) can still fall outside any
-> reasonable window. For a brand-new deployment, run a one-time catch-up (see
-> below) to backfill recent matches.
-
 ## Installation (no coding required)
 
 You don't need to install anything on your computer. Everything runs for free on
