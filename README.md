@@ -4,6 +4,8 @@
 
 # astroph2discord
 
+[![DOI](https://zenodo.org/badge/1282191711.svg)](https://doi.org/10.5281/zenodo.23278312)
+
 Deliver new **arXiv astro-ph** papers that match your keywords to a **Discord**
 channel, automatically, every weekday — for free via GitHub Actions.
 
@@ -183,7 +185,13 @@ CLI flags: `--days`, `--config`, `--dry-run`, `--state-file PATH`, `--no-state`.
 Masayuki Yamaguchi ([@Y-Masayuki](https://github.com/Y-Masayuki)) ·
 ORCID [0000-0002-8185-9882](https://orcid.org/0000-0002-8185-9882)
 
-If you use this tool, a link back to this repository is appreciated.
+## Citation
+
+If you use this tool, please cite it via its Zenodo DOI:
+[10.5281/zenodo.23278312](https://doi.org/10.5281/zenodo.23278312). The
+**Cite this repository** button on GitHub (generated from
+[`CITATION.cff`](CITATION.cff)) gives ready-made APA and BibTeX entries. A link
+back to this repository is also appreciated.
 
 ## License
 

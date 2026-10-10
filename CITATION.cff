@@ -12,6 +12,7 @@ authors:
   - family-names: "Yamaguchi"
     given-names: "Masayuki"
     orcid: "https://orcid.org/0000-0002-8185-9882"
+doi: "10.5281/zenodo.23278312"
 repository-code: "https://github.com/Y-Masayuki/astroph2discord"
 license: MIT
 keywords:
