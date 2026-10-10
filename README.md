@@ -5,7 +5,7 @@
 # astroph2discord
 
 Deliver new **arXiv astro-ph** papers that match your keywords to a **Discord**
-channel, automatically, every day — for free via GitHub Actions.
+channel, automatically, every weekday — for free via GitHub Actions.
 
 ## Why astroph2discord?
 
@@ -99,7 +99,7 @@ down and click **Commit changes**. No tools needed — GitHub edits it in place.
 4. After a minute the run turns green and the papers appear in your Discord
    channel. 🎉
 
-### Step 6 — That's it: it now runs every day
+### Step 6 — That's it: it now runs every weekday
 
 The workflow runs automatically every weekday (02:00 UTC = 11:00 JST; arXiv
 does not announce on weekends) and posts only
