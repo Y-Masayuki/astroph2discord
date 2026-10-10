@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "astroph2discord"
+abstract: >-
+  A tool that delivers new and revised arXiv astro-ph papers matching your
+  keywords to a Discord channel every weekday, running for free on GitHub
+  Actions. Features include keyword scoring, revision (v2, v3, ...) detection,
+  de-duplication, an author watch-list, and optional Japanese translation of
+  abstracts via DeepL.
+authors:
+  - family-names: "Yamaguchi"
+    given-names: "Masayuki"
+    orcid: "https://orcid.org/0000-0002-8185-9882"
+repository-code: "https://github.com/Y-Masayuki/astroph2discord"
+license: MIT
+keywords:
+  - arXiv
+  - astro-ph
+  - astronomy
+  - Discord
+  - notification
+  - GitHub Actions
