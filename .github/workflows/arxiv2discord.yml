@@ -2,12 +2,15 @@ name: arxiv2discord
 
 on:
   schedule:
-    # Runs daily at 02:00 UTC (= 11:00 JST), after arXiv's daily announcement
+    # Runs weekdays at 02:00 UTC (= 11:00 JST), after arXiv's daily announcement
     # (~00:00–01:00 UTC) so the day's new papers are captured same day.
+    # arXiv does not announce on weekends (JST Sat/Sun have no new papers), so
+    # Mon–Fri only — no pointless weekend runs. Note: 02:00 UTC = 11:00 JST the
+    # same calendar day, so the UTC weekday here equals the JST weekday.
     # The look-back window (config `days`) overlaps by a few days; the
     # committed seen-id cache prevents duplicate notifications and lets a
     # missed/failed run be recovered on the next run.
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * 1-5"
   workflow_dispatch:        # allow manual runs from the Actions tab
     inputs:
       days:

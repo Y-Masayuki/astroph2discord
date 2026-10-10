@@ -101,7 +101,8 @@ down and click **Commit changes**. No tools needed — GitHub edits it in place.
 
 ### Step 6 — That's it: it now runs every day
 
-The workflow runs automatically every day (02:00 UTC = 11:00 JST) and posts only
+The workflow runs automatically every weekday (02:00 UTC = 11:00 JST; arXiv
+does not announce on weekends) and posts only
 **new or revised** papers — duplicates are filtered out by the `seen_ids.json`
 cache, so you never get the same paper twice, and a skipped/failed run is
 recovered next time. To run by hand later, use **Run workflow** with **Disable
